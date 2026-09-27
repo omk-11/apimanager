@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-RENDER_URL = "https://YOUR-RENDER-APP.onrender.com"  # <-- replace with your real Render URL, no trailing slash
+RENDER_URL = "https://apimanager-5nuq.onrender.com"
 
 app = FastAPI()
 
