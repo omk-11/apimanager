@@ -1,14 +1,5 @@
 {
-  "builds": [
-    {
-      "src": "backend/main.py",
-      "use": "@vercel/python"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "backend/main.py"
-    }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "https://YOUR-RENDER-APP.onrender.com/$1" }
   ]
 }

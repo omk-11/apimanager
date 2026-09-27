@@ -29,7 +29,13 @@ import os
 # Location of the SQLite file
 # ---------------------------------------------------------------------------
 
-_DB_PATH = Path(__file__).parent.parent / "pipeline_data.db"
+# On Vercel only /tmp is writable; Vercel sets the VERCEL env var automatically.
+# Every other environment (local uvicorn, Docker) keeps the file next to the repo.
+_DB_PATH = (
+    Path("/tmp/pipeline_data.db")
+    if os.environ.get("VERCEL")
+    else Path(__file__).parent.parent / "pipeline_data.db"
+)
 
 
 def _connect() -> sqlite3.Connection:
