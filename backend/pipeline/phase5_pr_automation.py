@@ -101,16 +101,41 @@ def open_pr(
     run_id: int,
 ) -> PRResult:
     """
-    Gate on test passage, commit all patched files to a new branch via the
-    GitHub Git Data API, then open a pull request.
+    Gate on test/baseline status, then commit patched files to a new branch
+    and open a pull request.  merge_policy is always "moderator_only" —
+    this system NEVER merges PRs automatically.
 
-    Returns PRResult with opened=False (and a reason) if:
-      - Tests did not pass
-      - No files were patched (nothing to commit)
-      - Any GitHub API call fails
+    Policy gates (all must pass before a PR is opened):
+      - No tests found               → blocked (no_tests_found)
+      - Baseline regression detected → blocked (patch broke passing tests)
+      - Patched tests failed         → blocked
+      - No files patched             → nothing to commit
+    Human-review items do NOT block the PR; they are listed prominently.
     """
+    human_count = patch_result.counts().get("human", 0)
+
     # -----------------------------------------------------------------------
-    # Gate 1: tests must pass
+    # Gate 1: no_tests_found blocks
+    # -----------------------------------------------------------------------
+    if getattr(test_result, "status", None) == "no_tests_found":
+        return PRResult(
+            opened=False,
+            reason="No test suite found — cannot verify patch safety. PR not opened.",
+            human_review_count=human_count,
+        )
+
+    # -----------------------------------------------------------------------
+    # Gate 2: baseline regression blocks
+    # -----------------------------------------------------------------------
+    if test_result.baseline_regression:
+        return PRResult(
+            opened=False,
+            reason="Patch introduced a regression: baseline tests passed but patched tests failed. PR not opened.",
+            human_review_count=human_count,
+        )
+
+    # -----------------------------------------------------------------------
+    # Gate 3: patched tests must pass
     # -----------------------------------------------------------------------
     if not test_result.passed:
         return PRResult(
@@ -120,15 +145,17 @@ def open_pr(
                 f"({test_result.failed_count} failed, "
                 f"{test_result.error_count} errors) — PR not opened."
             ),
+            human_review_count=human_count,
         )
 
     # -----------------------------------------------------------------------
-    # Gate 2: there must be files to commit
+    # Gate 4: there must be files to commit
     # -----------------------------------------------------------------------
     if not patch_result.patched_files:
         return PRResult(
             opened=False,
             reason="No files were patched — nothing to commit.",
+            human_review_count=human_count,
         )
 
     repo_path = Path(repo_path)
@@ -265,12 +292,15 @@ def _create_branch_and_pr(
         },
     ).json()
 
+    human_count = patch_result.counts().get("human", 0)
     return PRResult(
         opened=True,
         pr_url=pr["html_url"],
         pr_number=pr["number"],
         branch=branch_name,
         reason="",
+        merge_policy="moderator_only",
+        human_review_count=human_count,
     )
 
 
@@ -305,16 +335,18 @@ def _build_pr_body(patch_result: PatchResult, run_id: int) -> str:
     lines = [
         f"## Auto-patch: API migration (run #{run_id})",
         "",
-        "This PR was opened automatically by the Self-Maintaining APIs pipeline.",
+        "> **MERGE POLICY: moderator_only** — This PR was opened automatically.",
+        "> A human reviewer must inspect, approve, and merge it.",
+        "> This system never merges pull requests automatically.",
         "",
         "### Patch summary",
         "",
         f"| Status | Count |",
         f"|--------|-------|",
-        f"| ✅ Mechanical | {counts.get('mechanical', 0)} |",
-        f"| 🤖 LLM-assisted | {counts.get('llm', 0)} |",
-        f"| ⚠️ Needs human review | {counts.get('human', 0)} |",
-        f"| ⏭️ Skipped (response reads) | {counts.get('skipped', 0)} |",
+        f"| Mechanical | {counts.get('mechanical', 0)} |",
+        f"| LLM-assisted | {counts.get('llm', 0)} |",
+        f"| Needs human review | {counts.get('human', 0)} |",
+        f"| Skipped (response reads) | {counts.get('skipped', 0)} |",
         "",
         "### Files changed",
         "",
@@ -325,9 +357,9 @@ def _build_pr_body(patch_result: PatchResult, run_id: int) -> str:
     if counts.get("human", 0):
         lines += [
             "",
-            "> **Action required:** "
+            "**Action required:** "
             f"{counts['human']} site(s) could not be patched automatically. "
-            "Search for `# HUMAN REVIEW` in the changed files.",
+            "Search for `# HUMAN REVIEW` in the changed files and supply the missing values before merging.",
         ]
 
     return "\n".join(lines)

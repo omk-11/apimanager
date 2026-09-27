@@ -52,7 +52,10 @@ app = FastAPI(
 @app.on_event("startup")
 async def on_startup() -> None:
     db.init_db()
-    asyncio.create_task(_watch_loop())
+    if os.environ.get("ENABLE_SPEC_WATCHER", "").lower() == "true":
+        asyncio.create_task(_watch_loop())
+    else:
+        print("[watcher] disabled — set ENABLE_SPEC_WATCHER=true to enable auto-polling")
 
 
 async def _watch_loop() -> None:

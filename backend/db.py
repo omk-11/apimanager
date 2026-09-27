@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS repos (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     name           TEXT    NOT NULL,          -- human label, e.g. "my-service"
     github_repo    TEXT    NOT NULL,          -- "owner/repo"
-    github_token   TEXT    NOT NULL,          -- stored as-is; never logged
+    token_env_var  TEXT,                      -- env var name holding the token (e.g. GITHUB_TOKEN)
     repo_path      TEXT    NOT NULL,          -- local FS path to the checked-out repo
     spec_old_path  TEXT    NOT NULL,          -- path to old OpenAPI spec JSON
     spec_new_path  TEXT    NOT NULL,          -- path to new OpenAPI spec JSON
@@ -80,10 +80,9 @@ def init_db() -> None:
     with _connect() as conn:
         conn.executescript(_DDL)
         # Additive migrations: add new columns to existing tables if absent.
-        # ALTER TABLE IF NOT EXISTS ... ADD COLUMN is not supported in older
-        # SQLite; we check the column list first.
-        _add_column_if_missing(conn, "repos", "spec_sha",    "TEXT")
-        _add_column_if_missing(conn, "repos", "auto_watch",  "INTEGER NOT NULL DEFAULT 1")
+        _add_column_if_missing(conn, "repos", "spec_sha",     "TEXT")
+        _add_column_if_missing(conn, "repos", "auto_watch",   "INTEGER NOT NULL DEFAULT 1")
+        _add_column_if_missing(conn, "repos", "token_env_var","TEXT")
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, typedef: str) -> None:
@@ -97,25 +96,39 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ty
 # Repos CRUD
 # ---------------------------------------------------------------------------
 
+def resolve_github_token(repo: dict[str, Any]) -> str:
+    """
+    Resolve the GitHub token for a repo at call time from the environment.
+    The raw token is NEVER stored in SQLite.
+
+    Resolution order:
+      1. If repo["token_env_var"] is set, read os.environ[token_env_var].
+      2. Fall back to os.environ["GITHUB_TOKEN"].
+      3. Return "" if nothing is set (caller should treat as missing).
+    """
+    env_var = repo.get("token_env_var") or "GITHUB_TOKEN"
+    return os.environ.get(env_var, "")
+
+
 def create_repo(
     *,
     name: str,
     github_repo: str,
-    github_token: str,
+    token_env_var: str = "GITHUB_TOKEN",
     repo_path: str,
     spec_old_path: str,
     spec_new_path: str,
 ) -> dict[str, Any]:
     """Insert a new repo row and return it as a dict."""
     sql = """
-        INSERT INTO repos (name, github_repo, github_token,
+        INSERT INTO repos (name, github_repo, token_env_var,
                            repo_path, spec_old_path, spec_new_path)
         VALUES (?, ?, ?, ?, ?, ?)
     """
     with _connect() as conn:
         cur = conn.execute(
             sql,
-            (name, github_repo, github_token, repo_path, spec_old_path, spec_new_path),
+            (name, github_repo, token_env_var, repo_path, spec_old_path, spec_new_path),
         )
         conn.commit()
         return get_repo(cur.lastrowid)  # type: ignore[arg-type]

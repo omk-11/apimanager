@@ -5,22 +5,22 @@ Entry point:
     detect_changes(old_spec: dict, new_spec: dict) -> SpecDiff
 
 What it detects (one FieldChange per item):
-  RENAMED         — field present in old, absent in new, but a same-type field
-                    with similarity ≥ 0.4 exists in new (SequenceMatcher).
-                    Ambiguous ties (two candidates with equal ratio) are not
-                    classified as renames — they fall through to REMOVED.
-  REMOVED         — field present in old, absent in new, no rename candidate.
-  NEWLY_REQUIRED  — field present in new's required[] but not old's required[].
-  DEPRECATED      — operation marked deprecated:true in new but not in old,
-                    OR field description contains "deprecated" in new but not old.
-  TYPE_CHANGED    — field present in both old and new with a different "type".
+  RENAMED           — field present in old, absent in new, but a same-type field
+                      with similarity >= 0.4 exists in new (SequenceMatcher).
+                      NOTE: lexically dissimilar renames (e.g. source ->
+                      payment_method) are NOT detected here; they surface as
+                      REMOVED + NEWLY_REQUIRED, which is the safer classification.
+  REMOVED           — field present in old, absent in new, no rename candidate.
+  REMOVED_ENDPOINT  — HTTP operation present in old spec, absent from new spec.
+  NEWLY_REQUIRED    — field present in new's required[] but not old's required[].
+  DEPRECATED        — operation marked deprecated:true in new but not in old.
+  TYPE_CHANGED      — field present in both old and new with a different "type".
 
 Spec traversal:
   - Walks components/schemas/* for field-level changes.
-  - Walks paths/*/[method] for deprecated endpoint changes.
+  - Walks paths/*/[method] for deprecated + removed endpoint changes.
   - Resolves $ref one level deep (only within #/components/schemas/).
-  - Does not recurse into nested object properties beyond one level to keep
-    the output tractable; nested paths use dotted notation (parent.field).
+  - Does not recurse into nested object properties beyond one level.
 """
 from __future__ import annotations
 
@@ -65,8 +65,9 @@ def detect_changes(old_spec: dict, new_spec: dict) -> SpecDiff:
             endpoint_tag=_tag_for_schema(schema_name, old_spec, new_spec),
         )
 
-    # 2. Operation-level deprecated changes
+    # 2. Operation-level changes (deprecated + removed endpoints)
     _diff_deprecated_operations(old_spec, new_spec, diff)
+    _diff_removed_operations(old_spec, new_spec, diff)
 
     return diff
 
@@ -326,6 +327,33 @@ def _diff_deprecated_operations(
                         kind=ChangeKind.DEPRECATED,
                         path=f"{method.upper()} {path_str}",
                         replacement_hint=hint or None,
+                        endpoint_tag=endpoint_tag,
+                    )
+                )
+
+
+def _diff_removed_operations(
+    old_spec: dict, new_spec: dict, diff: SpecDiff
+) -> None:
+    """
+    Detect HTTP operations present in old spec but absent from new spec.
+    Distinct from deprecated: these endpoints are fully gone.
+    """
+    old_paths: dict = old_spec.get("paths", {})
+    new_paths: dict = new_spec.get("paths", {})
+
+    for path_str, old_path_item in old_paths.items():
+        new_path_item = new_paths.get(path_str, {})
+        for method, old_op in old_path_item.items():
+            if not isinstance(old_op, dict):
+                continue
+            if method not in new_path_item:
+                tags = old_op.get("tags", [])
+                endpoint_tag = tags[0] if tags else None
+                diff.removals.append(
+                    FieldChange(
+                        kind=ChangeKind.REMOVED_ENDPOINT,
+                        path=f"{method.upper()} {path_str}",
                         endpoint_tag=endpoint_tag,
                     )
                 )

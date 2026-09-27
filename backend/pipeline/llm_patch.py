@@ -126,10 +126,26 @@ def _call_openrouter(prompt: str) -> str | None:
 
 
 def _clean(text: str) -> str | None:
-    """Strip markdown fences and excess whitespace from LLM output."""
+    """
+    Strip markdown fences, validate the result is exactly one non-empty line
+    that is syntactically valid Python.  Returns None if validation fails so
+    the caller falls back to HUMAN_REVIEW.
+    """
+    import ast as _ast
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
         inner = [l for l in lines if not l.startswith("```")]
         text = "\n".join(inner).strip()
-    return text if text else None
+    if not text:
+        return None
+    # Must be exactly one line
+    lines = text.splitlines()
+    if len(lines) != 1:
+        return None
+    # Must parse as valid Python (wrap in a function to allow indented lines)
+    try:
+        _ast.parse(f"def _f():\n    {lines[0].strip()}")
+    except SyntaxError:
+        return None
+    return text

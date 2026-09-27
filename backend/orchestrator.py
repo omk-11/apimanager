@@ -7,24 +7,21 @@ Entry point (called by the trigger endpoint in a background thread):
 Execution order:
     Stage 1  detect_changes     → SpecDiff
     Stage 2  scan_repo          → ScanResult
-    Stage 3  generate_patches   → PatchResult
-    Stage 4  run_tests          → TestResult
+    Stage 3  generate_patches   → PatchResult  (isolated temp copy)
+    Stage 4  run_tests          → TestResult   (baseline + patched)
     Stage 5  open_pr            → PRResult
 
-Each stage result is:
-  1. Attached to the PipelineRun dataclass
-  2. Serialised to a JSON-compatible dict and persisted to the DB via
-     db.update_run_stage() before the next stage starts
+Stage 3 patches an isolated temporary checkout, never the user's repo.
+Stage 4 runs baseline (original) and patched tests separately and records
+baseline_regression so Stage 5 can gate on it.
 
-If any stage raises an unhandled exception the run is marked 'error' and
-execution stops.  Stage failures that produce a structured result (e.g.
-tests failing, PR not opened) do NOT stop the pipeline — they are recorded
-and the next stage decides what to do.
+The temp checkout is cleaned up after Stage 5 completes.
 """
 from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 import traceback
 from pathlib import Path
 from typing import Any
@@ -59,11 +56,12 @@ def run_pipeline(run_id: int, repo: dict) -> None:
         github_repo=repo["github_repo"],
     )
 
+    patched_repo_path: Path | None = None
     try:
         _stage1(pipeline)
         _stage2(pipeline)
-        _stage3(pipeline)
-        _stage4(pipeline)
+        patched_repo_path = _stage3(pipeline)
+        _stage4(pipeline, original_path=repo["repo_path"])
         _stage5(pipeline)
     except Exception:
         db.update_run_finished(
@@ -72,6 +70,13 @@ def run_pipeline(run_id: int, repo: dict) -> None:
             error_message=traceback.format_exc(),
         )
         return
+    finally:
+        # Always clean up the isolated temp checkout
+        if patched_repo_path is not None:
+            try:
+                shutil.rmtree(patched_repo_path.parent, ignore_errors=True)
+            except Exception:
+                pass
 
     db.update_run_finished(run_id, success=True)
 
@@ -93,14 +98,18 @@ def _stage2(p: PipelineRun) -> None:
     db.update_run_stage(p.run_id, 2, _serialise_scan_result(p.scan_result))
 
 
-def _stage3(p: PipelineRun) -> None:
+def _stage3(p: PipelineRun) -> Path:
     assert p.scan_result is not None and p.spec_diff is not None
-    p.patch_result = generate_patches(p.repo_path, p.scan_result, p.spec_diff)
+    p.patch_result, patched_repo = generate_patches(p.repo_path, p.scan_result, p.spec_diff)
+    # Store patched_repo in meta so _stage4 can use it
+    p.meta["patched_repo_path"] = str(patched_repo)
     db.update_run_stage(p.run_id, 3, _serialise_patch_result(p.patch_result))
+    return patched_repo
 
 
-def _stage4(p: PipelineRun) -> None:
-    p.test_result = run_tests(p.repo_path)
+def _stage4(p: PipelineRun, original_path: str | None = None) -> None:
+    patched_path = p.meta.get("patched_repo_path", p.repo_path)
+    p.test_result = run_tests(patched_path, original_path=original_path)
     db.update_run_stage(p.run_id, 4, _serialise_test_result(p.test_result))
 
 
@@ -168,12 +177,14 @@ def _serialise_patch_result(patch) -> dict:
 def _serialise_test_result(test) -> dict:
     return {
         "passed": test.passed,
+        "status": test.status,
         "total": test.total,
         "passed_count": test.passed_count,
         "failed_count": test.failed_count,
         "error_count": test.error_count,
         "returncode": test.returncode,
-        # Truncate stdout/stderr to keep the DB row size bounded
+        "baseline_passed": test.baseline_passed,
+        "baseline_regression": test.baseline_regression,
         "stdout": test.stdout[-4000:] if test.stdout else "",
         "stderr": test.stderr[-2000:] if test.stderr else "",
     }
@@ -186,6 +197,8 @@ def _serialise_pr_result(pr) -> dict:
         "pr_number": pr.pr_number,
         "branch": pr.branch,
         "reason": pr.reason,
+        "merge_policy": pr.merge_policy,
+        "human_review_count": pr.human_review_count,
     }
 
 

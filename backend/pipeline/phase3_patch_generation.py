@@ -59,20 +59,31 @@ def generate_patches(
     repo_path: str | Path,
     scan_result: ScanResult,
     spec_diff: SpecDiff,
-) -> PatchResult:
+) -> tuple["PatchResult", Path]:
     """
-    Apply all safe mechanical patches and fall back to LLM / HUMAN REVIEW
-    for NEWLY_REQUIRED sites.  Returns a PatchResult with per-file patched
-    source and per-site PatchRecords.
-    """
-    repo_path = Path(repo_path)
-    result = PatchResult()
+    Apply all safe mechanical patches to an ISOLATED TEMPORARY COPY of the
+    repo.  The caller's primary working tree (repo_path) is never modified.
 
-    # Group sites by file so we can batch all edits per file.
+    Returns (PatchResult, patched_repo_path) where patched_repo_path is
+    the temporary directory containing the modified files.  The caller
+    (orchestrator) is responsible for cleaning it up after Stage 4/5.
+
+    patched_files in PatchResult maps relative path -> full patched source,
+    and unified_diff in each PatchRecord shows what changed.
+    """
+    import shutil, tempfile
+    repo_path = Path(repo_path)
+
+    # Create an isolated copy — this is what gets patched, never repo_path.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="api_patch_"))
+    patched_repo = tmp_dir / "repo"
+    shutil.copytree(str(repo_path), str(patched_repo))
+
+    result = PatchResult()
     by_file = scan_result.by_file()
 
     for rel_path, sites in by_file.items():
-        abs_path = repo_path / rel_path
+        abs_path = patched_repo / rel_path
         try:
             original_source = abs_path.read_text(encoding="utf-8")
         except OSError:
@@ -90,14 +101,13 @@ def generate_patches(
 
         patched_source = "".join(patched_lines)
 
-        # Only write back if something actually changed.
         if patched_source != original_source:
             abs_path.write_text(patched_source, encoding="utf-8")
             result.patched_files[rel_path] = patched_source
 
         result.records.extend(records)
 
-    return result
+    return result, patched_repo
 
 
 # ---------------------------------------------------------------------------

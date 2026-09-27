@@ -15,11 +15,12 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 class ChangeKind(str, Enum):
-    RENAMED          = "renamed"
-    REMOVED          = "removed"
-    NEWLY_REQUIRED   = "newly_required"
-    DEPRECATED       = "deprecated"
-    TYPE_CHANGED     = "type_changed"
+    RENAMED           = "renamed"
+    REMOVED           = "removed"
+    REMOVED_ENDPOINT  = "removed_endpoint"
+    NEWLY_REQUIRED    = "newly_required"
+    DEPRECATED        = "deprecated"
+    TYPE_CHANGED      = "type_changed"
 
 
 @dataclass
@@ -152,6 +153,11 @@ class TestResult:
     stdout: str
     stderr: str
     returncode: int
+    # "passed" | "failed" | "no_tests_found"
+    status: str = "passed"
+    # When run as the patched copy: did the baseline also pass?
+    baseline_passed: bool | None = None
+    baseline_regression: bool = False   # True → patch broke something that was passing
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +171,9 @@ class PRResult:
     pr_url: str | None = None
     pr_number: int | None = None
     branch: str | None = None
-    reason: str = ""             # populated when opened=False
+    reason: str = ""                          # populated when opened=False
+    merge_policy: str = "moderator_only"      # NEVER changed to anything else
+    human_review_count: int = 0               # how many HUMAN_REVIEW sites remain
 
 
 # ---------------------------------------------------------------------------
