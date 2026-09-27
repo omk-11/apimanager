@@ -160,7 +160,7 @@ def _apply_one(
     """Dispatch to the right patcher for one call site."""
     kind = cs.change.kind
 
-    if kind == ChangeKind.DEPRECATED:
+    if kind in (ChangeKind.DEPRECATED, ChangeKind.REMOVED_ENDPOINT):
         return _patch_deprecated(cs, lines)
 
     if kind == ChangeKind.REMOVED:

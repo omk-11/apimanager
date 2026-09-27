@@ -172,6 +172,173 @@ class TestPhase2:
 
 
 # ===========================================================================
+# Bug-regression tests (Bugs A, B, C)
+# ===========================================================================
+
+class TestBugFixes:
+    """
+    Targeted regression tests for the three scanner/patcher bugs fixed during
+    the adversarial demo hardening pass.
+    """
+
+    # -----------------------------------------------------------------------
+    # Bug A: REMOVED_ENDPOINT silently dropped by Phase 2
+    # -----------------------------------------------------------------------
+
+    def test_bug_a_removed_endpoint_detected_by_phase2(self):
+        """
+        Phase 2 must surface a CallSite for a REMOVED_ENDPOINT change.
+        Previously the visitor silently discarded it because _field_name_from_path
+        returned "" for endpoint-style paths, hitting the wrong else-branch.
+        """
+        import tempfile, textwrap
+        from pathlib import Path
+        from backend.pipeline.phase2_codebase_scan import scan_repo
+        from backend.pipeline.schema import ChangeKind, FieldChange, SpecDiff
+
+        # A spec diff with only a REMOVED_ENDPOINT change.
+        change = FieldChange(kind=ChangeKind.REMOVED_ENDPOINT, path="DELETE /v1/charges/{id}")
+        diff = SpecDiff()
+        diff.removals.append(change)
+
+        # A tiny Python file that calls stripe.Charge.delete(...)
+        code = textwrap.dedent("""\
+            import stripe
+            ch = stripe.Charge.delete("ch_123")
+        """)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text(code)
+            result = scan_repo(tmpdir, diff)
+
+        sites = [cs for cs in result.affected if cs.change.kind == ChangeKind.REMOVED_ENDPOINT]
+        assert len(sites) >= 1, \
+            "Bug A: REMOVED_ENDPOINT change not detected by Phase 2 scanner"
+
+    # -----------------------------------------------------------------------
+    # Bug B: arbitrary variable names missed by Phase 2 attribute scanner
+    # -----------------------------------------------------------------------
+
+    def test_bug_b_non_standard_var_name_detected(self):
+        """
+        Phase 2 must find attribute reads on variables whose names are NOT in
+        the static _INSTANCE_NAME_TO_RESOURCE table (e.g. cus, ch, result, resp).
+        Previously _infer_resource_from_value only checked that static table so
+        any non-standard variable name caused the read to be silently skipped.
+        """
+        import tempfile, textwrap
+        from pathlib import Path
+        from backend.pipeline.phase2_codebase_scan import scan_repo
+        from backend.pipeline.schema import ChangeKind, FieldChange, SpecDiff
+
+        change = FieldChange(kind=ChangeKind.REMOVED, path="Customer.balance")
+        diff = SpecDiff()
+        diff.removals.append(change)
+
+        # "cus" and "result" are NOT in _INSTANCE_NAME_TO_RESOURCE but are
+        # clearly assigned from stripe.Customer.* calls — the pre-pass must catch them.
+        code = textwrap.dedent("""\
+            import stripe
+            cus = stripe.Customer.create(email="x@y.com")
+            result = stripe.Customer.retrieve("cus_123")
+            print(cus.balance)
+            print(result.balance)
+        """)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text(code)
+            result = scan_repo(tmpdir, diff)
+
+        resp_reads = [
+            cs for cs in result.affected
+            if cs.is_response_read and cs.change.path == "Customer.balance"
+        ]
+        assert len(resp_reads) >= 2, (
+            f"Bug B: expected ≥2 response reads for non-standard var names, "
+            f"got {len(resp_reads)}: {[cs.source_text for cs in resp_reads]}"
+        )
+
+    def test_bug_b_local_var_inference_does_not_break_existing_names(self):
+        """
+        The pre-pass must not shadow names that ARE in the static table.
+        """
+        import tempfile, textwrap
+        from pathlib import Path
+        from backend.pipeline.phase2_codebase_scan import scan_repo
+        from backend.pipeline.schema import ChangeKind, FieldChange, SpecDiff
+
+        change = FieldChange(kind=ChangeKind.REMOVED, path="Charge.outcome")
+        diff = SpecDiff()
+        diff.removals.append(change)
+
+        code = textwrap.dedent("""\
+            import stripe
+            charge = stripe.Charge.create(amount=100, currency="usd")
+            print(charge.outcome)
+        """)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "app.py").write_text(code)
+            result = scan_repo(tmpdir, diff)
+
+        resp_reads = [cs for cs in result.affected if cs.is_response_read]
+        assert len(resp_reads) >= 1, \
+            "Bug B regression: well-known var name 'charge' no longer detected after fix"
+
+    # -----------------------------------------------------------------------
+    # Bug C: Phase 3 REMOVED_ENDPOINT fell through to SKIPPED in _apply_one
+    # -----------------------------------------------------------------------
+
+    def test_bug_c_removed_endpoint_gets_deprecated_comment(self):
+        """
+        Phase 3 must insert a # DEPRECATED comment for REMOVED_ENDPOINT sites,
+        exactly as it does for DEPRECATED sites.  Previously ChangeKind.REMOVED_ENDPOINT
+        hit the fallthrough 'Unhandled change kind' branch and produced a SKIPPED record.
+        """
+        import tempfile, textwrap
+        from pathlib import Path
+        from backend.pipeline.phase3_patch_generation import generate_patches
+        from backend.pipeline.schema import (
+            ChangeKind, FieldChange, CallSite, ScanResult, SpecDiff, PatchStatus,
+        )
+
+        change = FieldChange(
+            kind=ChangeKind.REMOVED_ENDPOINT,
+            path="DELETE /v1/charges/{id}",
+        )
+        cs = CallSite(
+            file="app.py",
+            line=3,
+            col=0,
+            source_text="stripe.Charge.delete",
+            change=change,
+            is_response_read=False,
+        )
+        scan = ScanResult()
+        scan.affected.append(cs)
+
+        code = textwrap.dedent("""\
+            import stripe
+            # some preamble
+            ch = stripe.Charge.delete("ch_123")
+        """)
+        diff = SpecDiff()
+        diff.removals.append(change)
+
+        with tempfile.TemporaryDirectory() as repo_dir:
+            (Path(repo_dir) / "app.py").write_text(code)
+            patch_result, patched_repo = generate_patches(repo_dir, scan, diff)
+
+        records = patch_result.records
+        assert len(records) == 1, f"Expected 1 patch record, got {len(records)}"
+        assert records[0].status == PatchStatus.MECHANICAL, (
+            f"Bug C: REMOVED_ENDPOINT produced status={records[0].status!r} "
+            f"(expected MECHANICAL deprecated comment)"
+        )
+        patched_text = list(patch_result.patched_files.values())[0]
+        assert "# DEPRECATED" in patched_text, \
+            "Bug C: no # DEPRECATED comment inserted for REMOVED_ENDPOINT site"
+
+
+
+# ===========================================================================
 # Phase 3 — Patch Generation
 # ===========================================================================
 

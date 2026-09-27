@@ -178,10 +178,42 @@ def _scan_file(
         # crash the pipeline.
         return
 
+    # Pre-pass: build variable → resource map from stripe.X.method() assignments
+    # so that ANY variable name (cus, result, c, resp, …) is recognised.
+    local_var_resource = _infer_local_var_resources(tree)
+
     source_lines = source.splitlines()
-    visitor = _StripeCallVisitor(rel_path, source_lines, spec_diff)
+    visitor = _StripeCallVisitor(rel_path, source_lines, spec_diff,
+                                 local_var_resource=local_var_resource)
     visitor.visit(tree)
     result.affected.extend(visitor.found)
+
+
+def _infer_local_var_resources(tree: ast.AST) -> dict[str, str]:
+    """
+    Walk all assignment nodes and map local variable names to Stripe resource
+    names when the RHS is a stripe.X.method(...) call.
+
+    e.g.
+        cus = stripe.Customer.create(...)   →  {"cus": "Customer"}
+        ch  = stripe.Charge.retrieve(...)   →  {"ch":  "Charge"}
+        result = stripe.PaymentIntent.confirm(...)  →  {"result": "PaymentIntent"}
+    """
+    mapping: dict[str, str] = {}
+    for node in ast.walk(tree):
+        # Regular assignment:  var = stripe.X.method(...)
+        if isinstance(node, ast.Assign):
+            resource, _ = _parse_stripe_call(node.value) if isinstance(node.value, ast.Call) else (None, "")
+            if resource:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        mapping[target.id] = resource
+        # Annotated assignment: var: Type = stripe.X.method(...)
+        elif isinstance(node, ast.AnnAssign):
+            resource, _ = _parse_stripe_call(node.value) if isinstance(node.value, ast.Call) else (None, "")
+            if resource and isinstance(node.target, ast.Name):
+                mapping[node.target.id] = resource
+    return mapping
 
 
 # ---------------------------------------------------------------------------
@@ -200,11 +232,15 @@ class _StripeCallVisitor(ast.NodeVisitor):
         rel_path: str,
         source_lines: list[str],
         spec_diff: SpecDiff,
+        local_var_resource: dict[str, str] | None = None,
     ) -> None:
         self.rel_path = rel_path
         self.source_lines = source_lines
         self.spec_diff = spec_diff
         self.found: list[CallSite] = []
+        # Per-file variable→resource map built by _infer_local_var_resources.
+        # Falls back to empty dict so _infer_resource_from_value always has it.
+        self._local_var_resource: dict[str, str] = local_var_resource or {}
 
         # Pre-build lookup structures for O(1) inner-loop checks.
         # keyword_changes: field_name → list[FieldChange] for request-side fields
@@ -217,11 +253,12 @@ class _StripeCallVisitor(ast.NodeVisitor):
         self._newly_required: dict[str, list[FieldChange]] = {}
 
         for change in spec_diff.all_changes():
-            if change.kind == ChangeKind.DEPRECATED:
-                # path = "POST /v1/charges"
+            if change.kind in (ChangeKind.DEPRECATED, ChangeKind.REMOVED_ENDPOINT):
+                # path = "POST /v1/charges" or "GET /v1/old_endpoint"
                 resource = _endpoint_to_resource(change.path)
                 if resource:
                     self._deprecated_changes.setdefault(resource, []).append(change)
+                continue
             else:
                 field = _field_name_from_path(change.path)
                 if not field:
@@ -268,7 +305,9 @@ class _StripeCallVisitor(ast.NodeVisitor):
             return
 
         # Determine if the object being accessed looks like a Stripe instance.
-        obj_resource = _infer_resource_from_value(node.value)
+        # Pass local_var_resource so inferred variable names (cus, ch, result…)
+        # are resolved before falling back to the static table.
+        obj_resource = _infer_resource_from_value(node.value, self._local_var_resource)
         if obj_resource is None:
             self.generic_visit(node)
             return
@@ -396,22 +435,27 @@ def _parse_stripe_call(node: ast.Call) -> tuple[str | None, str]:
     return None, ""
 
 
-def _infer_resource_from_value(node: ast.expr) -> str | None:
+def _infer_resource_from_value(
+    node: ast.expr,
+    local_var_resource: dict[str, str] | None = None,
+) -> str | None:
     """
     Given the object side of an attribute access (e.g. the `charge` in
     `charge.source`), try to infer which Stripe resource it represents.
 
-    Strategy:
-      - If it's a bare Name node, look up the variable name in
-        _INSTANCE_NAME_TO_RESOURCE.
-      - If it's itself an Attribute (e.g. charge.outcome), look up the
-        outermost Name.
+    Strategy (priority order):
+      1. Check the per-file AST-inferred map (local_var_resource) built by
+         _infer_local_var_resources — covers any variable name like cus, ch,
+         result, resp, r, …
+      2. Fall back to the static _INSTANCE_NAME_TO_RESOURCE table.
+      3. Recurse for chained attributes (e.g. charge.outcome.seller_message).
     """
+    lv = local_var_resource or {}
     if isinstance(node, ast.Name):
-        return _INSTANCE_NAME_TO_RESOURCE.get(node.id)
+        return lv.get(node.id) or _INSTANCE_NAME_TO_RESOURCE.get(node.id)
     if isinstance(node, ast.Attribute):
         # e.g. charge.outcome  — outermost object is `charge`
-        return _infer_resource_from_value(node.value)
+        return _infer_resource_from_value(node.value, lv)
     return None
 
 

@@ -5,7 +5,7 @@ A five-stage pipeline that watches for breaking changes in a third-party API (St
 ## Quick start
 
 ```bash
-cd api-manager-web
+cd apimanager
 pip install -r requirements.txt
 cp .env.example .env          # fill in GITHUB_TOKEN and OPENROUTER_API_KEY
 uvicorn backend.main:app --reload --port 8000
