@@ -1,0 +1,206 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Stripe API (new)", "version": "2024-06-20" },
+  "tags": [
+    { "name": "Charges" },
+    { "name": "PaymentIntents" },
+    { "name": "Customers" }
+  ],
+  "paths": {
+    "/v1/charges": {
+      "post": {
+        "tags": ["Charges"],
+        "operationId": "CreateCharge",
+        "deprecated": true,
+        "description": "Deprecated: use /v1/payment_intents instead.",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreateChargeRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Charge" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/charges/{charge}": {
+      "get": {
+        "tags": ["Charges"],
+        "operationId": "RetrieveCharge",
+        "parameters": [
+          { "name": "charge", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Charge" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/payment_intents": {
+      "post": {
+        "tags": ["PaymentIntents"],
+        "operationId": "CreatePaymentIntent",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreatePaymentIntentRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentIntent" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customers": {
+      "post": {
+        "tags": ["Customers"],
+        "operationId": "CreateCustomer",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreateCustomerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Customer" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateChargeRequest": {
+        "type": "object",
+        "required": ["amount", "currency", "payment_method"],
+        "properties": {
+          "amount":         { "type": "integer", "description": "Amount in smallest currency unit" },
+          "currency":       { "type": "string" },
+          "payment_method": { "type": "string", "description": "Payment method ID (replaces source)" },
+          "description":    { "type": "string" },
+          "metadata":       { "type": "object" }
+        }
+      },
+      "Charge": {
+        "type": "object",
+        "properties": {
+          "id":              { "type": "string" },
+          "object":          { "type": "string", "enum": ["charge"] },
+          "amount":          { "type": "integer" },
+          "currency":        { "type": "string" },
+          "captured":        { "type": "boolean" },
+          "status":          { "type": "string", "enum": ["succeeded", "pending", "failed"] },
+          "failure_code":    { "type": "string" },
+          "failure_message": { "type": "string" },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "network_status": { "type": "string" },
+              "reason":         { "type": "string" },
+              "risk_level":     { "type": "string" },
+              "risk_score":     { "type": "integer", "description": "0-100 risk score (replaces seller_message)" },
+              "seller_message": { "type": "string" }
+            }
+          },
+          "payment_method": {
+            "type": "string",
+            "description": "The payment method ID used (replaces source object)"
+          },
+          "metadata":    { "type": "object" },
+          "created":     { "type": "integer", "description": "Unix timestamp" },
+          "livemode":    { "type": "boolean" }
+        }
+      },
+      "CreatePaymentIntentRequest": {
+        "type": "object",
+        "required": ["amount", "currency", "payment_method"],
+        "properties": {
+          "amount":               { "type": "integer" },
+          "currency":             { "type": "string" },
+          "payment_method":       { "type": "string", "description": "Payment method ID (now required)" },
+          "payment_method_types": { "type": "array", "items": { "type": "string" } },
+          "description":          { "type": "string" },
+          "metadata":             { "type": "object" },
+          "confirm":              { "type": "boolean" }
+        }
+      },
+      "PaymentIntent": {
+        "type": "object",
+        "properties": {
+          "id":             { "type": "string" },
+          "object":         { "type": "string", "enum": ["payment_intent"] },
+          "amount":         { "type": "integer" },
+          "currency":       { "type": "string" },
+          "status":         { "type": "string" },
+          "client_secret":  { "type": "string" },
+          "description":    { "type": "string" },
+          "latest_charge":  { "type": "string", "description": "ID of the latest charge (new field)" },
+          "last_payment_error": {
+            "type": "object",
+            "properties": {
+              "code":           { "type": "string" },
+              "message":        { "type": "string" },
+              "decline_code":   { "type": "string", "description": "New: more specific decline reason" },
+              "type":           { "type": "string" }
+            }
+          },
+          "metadata":  { "type": "object" },
+          "created":   { "type": "integer" },
+          "livemode":  { "type": "boolean" }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "properties": {
+          "email":       { "type": "string" },
+          "name":        { "type": "string" },
+          "phone":       { "type": "string" },
+          "description": { "type": "string" },
+          "metadata":    { "type": "object" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id":          { "type": "string" },
+          "object":      { "type": "string", "enum": ["customer"] },
+          "email":       { "type": "string" },
+          "name":        { "type": "string" },
+          "phone":       { "type": "string" },
+          "description": { "type": "string" },
+          "balance":     { "type": "number", "description": "Current balance as decimal (was integer)" },
+          "delinquent":  { "type": "boolean" },
+          "metadata":    { "type": "object" },
+          "created":     { "type": "integer" },
+          "livemode":    { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

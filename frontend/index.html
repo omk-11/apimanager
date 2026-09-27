@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Self-Maintaining APIs</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Self-Maintaining APIs</h1>
+    <p class="subtitle">Watches for breaking Stripe API changes and auto-patches customer codebases</p>
+  </header>
+
+  <main>
+    <!-- Register a repo -->
+    <section id="section-register">
+      <h2>Register Repository</h2>
+      <form id="form-register">
+        <div class="field-row">
+          <label>Name <input type="text" name="name" placeholder="my-billing-service" required /></label>
+          <label>GitHub repo <input type="text" name="github_repo" placeholder="owner/repo" required /></label>
+        </div>
+        <div class="field-row">
+          <label>GitHub token <input type="password" name="github_token" placeholder="ghp_…" required /></label>
+          <label>Local repo path <input type="text" name="repo_path" placeholder="/absolute/path/to/repo" required /></label>
+        </div>
+        <div class="field-row">
+          <label>Old spec path <input type="text" name="spec_old_path" placeholder="/path/to/spec_old.json" required /></label>
+          <label>New spec path <input type="text" name="spec_new_path" placeholder="/path/to/spec_new.json" required /></label>
+        </div>
+        <button type="submit">Register</button>
+        <span id="register-msg" class="msg"></span>
+      </form>
+    </section>
+
+    <!-- Registered repos -->
+    <section id="section-repos">
+      <h2>Registered Repositories</h2>
+      <div id="repos-list"><p class="muted">Loading…</p></div>
+    </section>
+
+    <!-- Run history -->
+    <section id="section-runs">
+      <h2>Pipeline Runs</h2>
+      <div id="runs-list"><p class="muted">No runs yet.</p></div>
+    </section>
+
+    <!-- Run detail drawer -->
+    <div id="run-detail" class="drawer hidden">
+      <div class="drawer-inner">
+        <button id="drawer-close" aria-label="Close">✕</button>
+        <div id="drawer-content"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

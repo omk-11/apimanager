@@ -1,0 +1,200 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Stripe API (old)", "version": "2023-08-16" },
+  "tags": [
+    { "name": "Charges" },
+    { "name": "PaymentIntents" },
+    { "name": "Customers" }
+  ],
+  "paths": {
+    "/v1/charges": {
+      "post": {
+        "tags": ["Charges"],
+        "operationId": "CreateCharge",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreateChargeRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Charge" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/charges/{charge}": {
+      "get": {
+        "tags": ["Charges"],
+        "operationId": "RetrieveCharge",
+        "parameters": [
+          { "name": "charge", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Charge" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/payment_intents": {
+      "post": {
+        "tags": ["PaymentIntents"],
+        "operationId": "CreatePaymentIntent",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreatePaymentIntentRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentIntent" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customers": {
+      "post": {
+        "tags": ["Customers"],
+        "operationId": "CreateCustomer",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/CreateCustomerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Customer" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateChargeRequest": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount":      { "type": "integer", "description": "Amount in smallest currency unit" },
+          "currency":    { "type": "string" },
+          "source":      { "type": "string", "description": "Payment source token" },
+          "description": { "type": "string" },
+          "metadata":    { "type": "object" }
+        }
+      },
+      "Charge": {
+        "type": "object",
+        "properties": {
+          "id":              { "type": "string" },
+          "object":          { "type": "string", "enum": ["charge"] },
+          "amount":          { "type": "integer" },
+          "currency":        { "type": "string" },
+          "captured":        { "type": "boolean" },
+          "status":          { "type": "string", "enum": ["succeeded", "pending", "failed"] },
+          "failure_code":    { "type": "string" },
+          "failure_message": { "type": "string" },
+          "outcome": {
+            "type": "object",
+            "properties": {
+              "network_status": { "type": "string" },
+              "reason":         { "type": "string" },
+              "risk_level":     { "type": "string" },
+              "seller_message": { "type": "string" }
+            }
+          },
+          "source": {
+            "type": "object",
+            "description": "The payment source (card details, etc.)"
+          },
+          "metadata":    { "type": "object" },
+          "created":     { "type": "integer", "description": "Unix timestamp" },
+          "livemode":    { "type": "boolean" }
+        }
+      },
+      "CreatePaymentIntentRequest": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount":               { "type": "integer" },
+          "currency":             { "type": "string" },
+          "payment_method_types": { "type": "array", "items": { "type": "string" } },
+          "description":          { "type": "string" },
+          "metadata":             { "type": "object" },
+          "confirm":              { "type": "boolean" }
+        }
+      },
+      "PaymentIntent": {
+        "type": "object",
+        "properties": {
+          "id":             { "type": "string" },
+          "object":         { "type": "string", "enum": ["payment_intent"] },
+          "amount":         { "type": "integer" },
+          "currency":       { "type": "string" },
+          "status":         { "type": "string" },
+          "client_secret":  { "type": "string" },
+          "description":    { "type": "string" },
+          "last_payment_error": {
+            "type": "object",
+            "properties": {
+              "code":    { "type": "string" },
+              "message": { "type": "string" },
+              "type":    { "type": "string" }
+            }
+          },
+          "metadata":  { "type": "object" },
+          "created":   { "type": "integer" },
+          "livemode":  { "type": "boolean" }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "properties": {
+          "email":       { "type": "string" },
+          "name":        { "type": "string" },
+          "phone":       { "type": "string" },
+          "description": { "type": "string" },
+          "metadata":    { "type": "object" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id":          { "type": "string" },
+          "object":      { "type": "string", "enum": ["customer"] },
+          "email":       { "type": "string" },
+          "name":        { "type": "string" },
+          "phone":       { "type": "string" },
+          "description": { "type": "string" },
+          "balance":     { "type": "integer", "description": "Current balance in smallest currency unit" },
+          "delinquent":  { "type": "boolean" },
+          "metadata":    { "type": "object" },
+          "created":     { "type": "integer" },
+          "livemode":    { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
