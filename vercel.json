@@ -1,4 +1,5 @@
 {
+  "framework": null,
   "rewrites": [
     { "source": "/(.*)", "destination": "https://YOUR-RENDER-APP.onrender.com/$1" }
   ]
