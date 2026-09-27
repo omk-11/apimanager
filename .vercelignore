@@ -1,0 +1,7 @@
+backend/
+sample_data/
+tests/
+frontend/
+requirements.txt
+Dockerfile
+*.db
